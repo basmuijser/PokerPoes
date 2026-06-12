@@ -16,12 +16,18 @@ export default function CreatePage() {
   const [mode, setMode] = useState<"fun" | "money">("fun");
   const [startingChips, setStartingChips] = useState(1000);
   const [chipValue, setChipValue] = useState(0.1);
+  const [smallBlind, setSmallBlind] = useState(10);
+  const [bigBlind, setBigBlind] = useState(20);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return setError("Enter your name");
+    if (smallBlind <= 0 || bigBlind <= 0)
+      return setError("Blinds must be positive");
+    if (bigBlind <= smallBlind)
+      return setError("Big blind must be larger than small blind");
     if (!hasSupabaseEnv()) {
       return setError(
         "Supabase env vars missing. Copy .env.example to .env.local and fill them in.",
@@ -53,6 +59,10 @@ export default function CreatePage() {
           mode,
           chip_value: mode === "money" ? chipValue : 0,
           starting_chips: startingChips,
+          small_blind: smallBlind,
+          big_blind: bigBlind,
+          game_phase: "lobby",
+          hand_state: "awaiting_start",
         })
         .select()
         .single();
@@ -66,6 +76,7 @@ export default function CreatePage() {
           chips: startingChips,
           total_buyins: startingChips,
           is_host: true,
+          seat_order: 0,
         })
         .select()
         .single();
@@ -157,6 +168,37 @@ export default function CreatePage() {
           />
         </div>
 
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-muted">
+              Small blind
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={smallBlind}
+              onChange={(e) =>
+                setSmallBlind(Math.max(1, Number(e.target.value) || 0))
+              }
+              className="h-12 w-full rounded-xl border border-white/10 bg-panel px-4 text-base outline-none transition focus:border-feltLight"
+            />
+          </div>
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-muted">
+              Big blind
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={bigBlind}
+              onChange={(e) =>
+                setBigBlind(Math.max(1, Number(e.target.value) || 0))
+              }
+              className="h-12 w-full rounded-xl border border-white/10 bg-panel px-4 text-base outline-none transition focus:border-feltLight"
+            />
+          </div>
+        </div>
+
         {mode === "money" && (
           <div className="animate-fadeIn">
             <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-muted">
@@ -174,7 +216,9 @@ export default function CreatePage() {
             />
             <p className="mt-2 text-xs text-muted">
               Buy-in {startingChips.toLocaleString()} chips = €
-              {(startingChips * chipValue).toFixed(2)}
+              {(startingChips * chipValue).toFixed(2)} · Blinds €
+              {(smallBlind * chipValue).toFixed(2)} / €
+              {(bigBlind * chipValue).toFixed(2)}
             </p>
           </div>
         )}

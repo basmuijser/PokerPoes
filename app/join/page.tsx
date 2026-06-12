@@ -40,6 +40,15 @@ function JoinForm() {
       if (gerr) throw gerr;
       if (!game) throw new Error("Room not found");
       if (game.status === "ended") throw new Error("This game has ended");
+      if (game.game_phase && game.game_phase !== "lobby")
+        throw new Error("Game already started — ask the banker to wait");
+
+      const { count } = await supabase
+        .from("players")
+        .select("*", { count: "exact", head: true })
+        .eq("game_id", game.id);
+      if ((count ?? 0) >= 8)
+        throw new Error("Room is full (8 players max)");
 
       const { data: player, error: perr } = await supabase
         .from("players")
@@ -49,6 +58,7 @@ function JoinForm() {
           chips: game.starting_chips,
           total_buyins: game.starting_chips,
           is_host: false,
+          seat_order: count ?? 0,
         })
         .select()
         .single();

@@ -22,7 +22,9 @@ Open <http://localhost:3000>.
 ## Supabase setup
 
 1. Create a new Supabase project.
-2. Open the SQL editor and paste the contents of [`supabase/migrations.sql`](supabase/migrations.sql). This creates the three tables, enables RLS with public read/write policies, and adds them to the `supabase_realtime` publication.
+2. Open the SQL editor and run, in order:
+   - [`supabase/migrations.sql`](supabase/migrations.sql) — core tables (games, players, pot).
+   - [`supabase/migrations_v2.sql`](supabase/migrations_v2.sql) — betting engine: extends `games`/`players` and adds `betting_rounds`, `player_actions`, `side_pots`. Enables Realtime on all new tables and RLS public read/write.
 3. In **Project Settings → API**, copy the URL and `anon` public key into `.env.local`.
 
 > No auth is used — the 4-digit room code is the access control. Keep codes secret to keep games private.
