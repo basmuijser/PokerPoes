@@ -8,24 +8,58 @@ export interface SidePot {
 // ────────────────────────────── ordering ──────────────────────────────
 
 export function sortBySeat(players: Player[]): Player[] {
-  return [...players].sort(
-    (a, b) => (a.seat_order ?? 0) - (b.seat_order ?? 0),
-  );
+  // Drop anyone without a seat_order — they can't participate in a hand.
+  return players
+    .filter((p) => p.seat_order !== null && p.seat_order !== undefined)
+    .slice()
+    .sort((a, b) => (a.seat_order as number) - (b.seat_order as number));
 }
 
 // Returns players ordered clockwise starting one seat AFTER `fromSeat`.
+// `fromSeat` doesn't have to be the seat of a current player — if the
+// seat number doesn't match anyone (e.g. someone left), we still produce
+// a sensible clockwise order by inserting the cursor at the smallest seat
+// > fromSeat and treating the seat just before that as the cursor.
 export function clockwiseAfter(players: Player[], fromSeat: number): Player[] {
   const sorted = sortBySeat(players);
-  if (sorted.length === 0) return [];
-  const idx = sorted.findIndex((p) => (p.seat_order ?? -1) === fromSeat);
-  if (idx === -1) return sorted;
-  return [...sorted.slice(idx + 1), ...sorted.slice(0, idx + 1)];
+  const n = sorted.length;
+  if (n === 0) return [];
+
+  const exact = sorted.findIndex((p) => p.seat_order === fromSeat);
+  if (exact !== -1) {
+    return [...sorted.slice(exact + 1), ...sorted.slice(0, exact + 1)];
+  }
+  // Cursor sits "between" seats — find the next seat strictly greater than fromSeat,
+  // then place the first slice starting there.
+  const next = sorted.findIndex((p) => (p.seat_order as number) > fromSeat);
+  if (next === -1) {
+    // fromSeat is past the highest seat → cursor wraps; start from seat 0.
+    return sorted;
+  }
+  return [...sorted.slice(next), ...sorted.slice(0, next)];
+}
+
+// Seat to pass to `findNextToAct` so that the FIRST player it returns is
+// the small-blind player. This is the seat directly before SB clockwise:
+//   • Non-heads-up: SB sits one seat left of the dealer → returns the dealer seat.
+//   • Heads-up:     SB == dealer            → returns the BB (other) seat.
+export function seatBeforeSmallBlind(
+  seats: number[],
+  smallBlindSeat: number,
+): number {
+  const n = seats.length;
+  if (n === 0) return 0;
+  const idx = seats.indexOf(smallBlindSeat);
+  if (idx === -1) return seats[n - 1];
+  return seats[(idx - 1 + n) % n];
 }
 
 // ────────────────────────────── turn logic ────────────────────────────
 
 // Next active player to act, walking clockwise from `fromSeat` (exclusive).
-// Returns null if betting round is complete.
+// Active = not folded and not all-in. Returns null if betting round is complete.
+// Always walks exactly one seat at a time; folded/all-in players are the only
+// reason to skip a seat.
 export function findNextToAct(
   players: Player[],
   currentHighestBet: number,
@@ -33,7 +67,8 @@ export function findNextToAct(
 ): Player | null {
   const ordered = clockwiseAfter(players, fromSeat);
   for (const p of ordered) {
-    if (p.hand_status !== "active") continue;
+    if (p.hand_status === "folded") continue;
+    if (p.hand_status === "all-in") continue;
     if (!p.has_acted || p.current_bet < currentHighestBet) return p;
   }
   return null;
@@ -158,12 +193,15 @@ export function pickRandomDealer(seats: number[]): number {
 }
 
 // Seat from which to start `findNextToAct` for the first action of a betting round.
-// First betting round: action begins LEFT OF BB → start "from" BB seat.
-// Subsequent rounds: action begins LEFT OF DEALER → start "from" dealer seat.
+// Pre-flop (round 1):  SB acts first → start "from" the seat before SB.
+// Subsequent rounds:   action begins left of DEALER → start "from" dealer seat.
 export function firstActorSeat(
   roundNumber: number,
+  seats: number[],
   dealerSeat: number,
-  bigBlindSeat: number,
+  smallBlindSeat: number,
 ): number {
-  return roundNumber === 1 ? bigBlindSeat : dealerSeat;
+  return roundNumber === 1
+    ? seatBeforeSmallBlind(seats, smallBlindSeat)
+    : dealerSeat;
 }

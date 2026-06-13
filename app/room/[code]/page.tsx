@@ -22,6 +22,7 @@ import RaiseModal from "@/components/RaiseModal";
 import SidePotsPanel from "@/components/SidePotsPanel";
 import WinnerAssign from "@/components/WinnerAssign";
 import AnimatedNumber from "@/components/AnimatedNumber";
+import HandRankings from "@/components/HandRankings";
 
 export default function RoomPage() {
   const params = useParams<{ code: string }>();
@@ -50,6 +51,9 @@ export default function RoomPage() {
     onConfirm: (n: number) => void;
   }>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showRankings, setShowRankings] = useState(false);
+  const [dealToast, setDealToast] = useState(false);
+  const prevRoundRef = useRef<{ hand: number; round: number } | null>(null);
 
   const refresh = useCallback(async () => {
     const supabase = getSupabase();
@@ -171,6 +175,27 @@ export default function RoomPage() {
   useEffect(() => {
     if (game?.game_phase === "ended") router.replace(`/room/${code}/end`);
   }, [game?.game_phase, code, router]);
+
+  // Toast: a new betting round just started within the same hand.
+  useEffect(() => {
+    if (!game) return;
+    const cur = { hand: game.current_hand, round: game.current_round };
+    const prev = prevRoundRef.current;
+    let cancel: number | null = null;
+    if (
+      prev &&
+      cur.hand === prev.hand &&
+      cur.round > prev.round &&
+      game.hand_state === "betting"
+    ) {
+      setDealToast(true);
+      cancel = window.setTimeout(() => setDealToast(false), 6000);
+    }
+    prevRoundRef.current = cur;
+    return () => {
+      if (cancel !== null) window.clearTimeout(cancel);
+    };
+  }, [game?.current_round, game?.current_hand, game?.hand_state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const me = useMemo(
     () => players.find((p) => p.id === meId) ?? null,
@@ -426,6 +451,17 @@ export default function RoomPage() {
               await A.endGame(game);
             }}
           />
+        )}
+
+        <button
+          onClick={() => setShowRankings(true)}
+          aria-label="Show poker hand rankings"
+          className="fixed bottom-4 right-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-panel text-base font-bold text-feltLight shadow-lg transition hover:bg-panelAlt active:scale-95"
+        >
+          ?
+        </button>
+        {showRankings && (
+          <HandRankings onClose={() => setShowRankings(false)} />
         )}
       </main>
     );
@@ -740,6 +776,24 @@ export default function RoomPage() {
           {actionError}
         </div>
       )}
+
+      {dealToast && (
+        <div className="pointer-events-none fixed inset-x-0 top-20 z-40 flex justify-center px-4 animate-fadeIn">
+          <div className="pointer-events-auto rounded-2xl border border-feltLight/60 bg-felt/90 px-5 py-3 text-sm font-semibold text-chip shadow-glow backdrop-blur">
+            🃏 Nieuwe kaarten mogen gedeald worden
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={() => setShowRankings(true)}
+        aria-label="Show poker hand rankings"
+        className="fixed bottom-24 right-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-panel text-base font-bold text-feltLight shadow-lg transition hover:bg-panelAlt active:scale-95"
+      >
+        ?
+      </button>
+
+      {showRankings && <HandRankings onClose={() => setShowRankings(false)} />}
     </main>
   );
 }

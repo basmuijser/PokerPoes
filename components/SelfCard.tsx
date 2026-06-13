@@ -2,6 +2,7 @@
 
 import type { Player } from "@/lib/types";
 import AnimatedNumber from "./AnimatedNumber";
+import RoleBadge from "./RoleBadge";
 
 interface Props {
   player: Player;
@@ -19,24 +20,26 @@ export default function SelfCard({
   return (
     <div
       className={`relative rounded-3xl border bg-gradient-to-br from-panelAlt to-panel p-6 transition-shadow ${
-        isMyTurn
-          ? "border-feltLight shadow-glow"
-          : "border-white/10"
+        isMyTurn ? "border-feltLight shadow-glow" : "border-white/10"
       }`}
     >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-chip/80">
             {player.name}
           </span>
-          {player.is_dealer && <Pill label="D" tone="muted" />}
-          {player.is_small_blind && <Pill label="SB" tone="muted" />}
-          {player.is_big_blind && <Pill label="BB" tone="muted" />}
+          {player.is_dealer && <RoleBadge role="D" />}
+          {player.is_small_blind && <RoleBadge role="SB" />}
+          {player.is_big_blind && <RoleBadge role="BB" />}
           {player.hand_status === "all-in" && (
-            <Pill label="ALL-IN" tone="warn" />
+            <span className="rounded-full bg-danger/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-danger">
+              ALL-IN
+            </span>
           )}
           {player.hand_status === "folded" && (
-            <Pill label="FOLDED" tone="dim" />
+            <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">
+              FOLDED
+            </span>
           )}
         </div>
         {isMyTurn && (
@@ -48,7 +51,7 @@ export default function SelfCard({
 
       <div className="mt-3">
         <div className="text-[10px] font-semibold uppercase tracking-widest text-muted">
-          Your chips
+          Jouw fiches
         </div>
         <AnimatedNumber
           value={player.chips}
@@ -61,44 +64,27 @@ export default function SelfCard({
         )}
       </div>
 
-      {(player.current_bet > 0 || player.total_hand_bet > 0) && (
-        <div className="mt-3 flex items-center justify-between rounded-xl bg-bg/50 px-3 py-2 text-xs">
-          <span className="text-muted">
-            In this round:{" "}
-            <span className="font-semibold text-chip">
-              {player.current_bet.toLocaleString()}
-            </span>
-          </span>
-          <span className="text-muted">
-            This hand:{" "}
-            <span className="font-semibold text-chip">
-              {player.total_hand_bet.toLocaleString()}
-            </span>
+      <div className="mt-3 flex flex-col gap-1 rounded-xl bg-bg/50 px-3 py-2 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="text-muted">Ingezet deze ronde</span>
+          <span className="font-semibold text-chip">
+            {player.current_bet.toLocaleString()} fiches
+            {moneyMode && (
+              <span className="ml-1 text-muted">
+                · €{(player.current_bet * chipValue).toFixed(2)}
+              </span>
+            )}
           </span>
         </div>
-      )}
+        <div className="flex items-center justify-between text-muted">
+          <span>Ingezet deze hand</span>
+          <span>
+            {player.total_hand_bet.toLocaleString()} fiches
+            {moneyMode &&
+              ` · €${(player.total_hand_bet * chipValue).toFixed(2)}`}
+          </span>
+        </div>
+      </div>
     </div>
-  );
-}
-
-function Pill({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: "muted" | "warn" | "dim";
-}) {
-  const cls =
-    tone === "warn"
-      ? "bg-danger/20 text-danger"
-      : tone === "dim"
-        ? "bg-white/5 text-muted"
-        : "bg-felt/30 text-feltLight";
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${cls}`}
-    >
-      {label}
-    </span>
   );
 }

@@ -21,18 +21,15 @@ export default function RaiseModal({
 }: Props) {
   const minRaise = currentHighestBet + 1;
   const maxRaise = myCurrentBet + myChips;
-  const defaultRaise = Math.min(
-    maxRaise,
-    Math.max(minRaise, currentHighestBet + bigBlind),
-  );
-  const [value, setValue] = useState<string>(String(defaultRaise));
+  const [value, setValue] = useState<string>("");
 
   const n = Math.floor(Number(value) || 0);
-  const valid = n >= minRaise && n <= maxRaise;
+  const valid = value.trim() !== "" && n >= minRaise && n <= maxRaise;
   const additional = Math.max(0, n - myCurrentBet);
 
   function bump(by: number) {
-    const next = Math.min(maxRaise, Math.max(minRaise, n + by));
+    const current = Number(value) || 0;
+    const next = Math.min(maxRaise, Math.max(minRaise, current + by));
     setValue(String(next));
   }
 

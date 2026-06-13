@@ -12,13 +12,13 @@ import {
   calculateSidePots,
   computeBlindSeats,
   findNextToAct,
-  firstActorSeat,
   hasAnyAllIn,
   isBettingRoundComplete,
   isHandOver,
   noMoreBettingPossible,
   pickRandomDealer,
   rotateDealer,
+  seatBeforeSmallBlind,
   sortBySeat,
 } from "./poker";
 
@@ -225,7 +225,10 @@ export async function beginHand(
     };
   });
 
-  const next = findNextToAct(updatedPlayers, bbAmount, bigBlindSeat);
+  // Pre-flop the small blind acts first. `findNextToAct` walks clockwise
+  // exclusive of `fromSeat`, so we hand it the seat directly before SB.
+  const preflopFromSeat = seatBeforeSmallBlind(seats, smallBlindSeat);
+  const next = findNextToAct(updatedPlayers, bbAmount, preflopFromSeat);
 
   await supabase
     .from("games")
@@ -429,9 +432,14 @@ async function applyAction(
     last_aggressor_id: nextAggressorId,
   };
 
+  if (player.seat_order === null || player.seat_order === undefined) {
+    throw new Error(
+      "Player has no seat_order. The game must be started before betting.",
+    );
+  }
   await advance(
     { ...ctx, players: newPlayers, round: newRound },
-    player.seat_order ?? 0,
+    player.seat_order,
   );
 }
 
