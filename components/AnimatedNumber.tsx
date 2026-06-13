@@ -49,7 +49,11 @@ export default function AnimatedNumber({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  const text = format ? format(display) : display.toLocaleString();
+  // Locale-independent thousand separator to avoid SSR/CSR hydration
+  // mismatches (server defaults to en-US "1,240", client may be nl-NL "1.240").
+  const defaultFormat = (n: number) =>
+    Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const text = format ? format(display) : defaultFormat(display);
   return (
     <span
       className={`${className ?? ""} inline-block ${pulse ? "animate-pop text-feltLight" : ""}`}

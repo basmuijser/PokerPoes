@@ -29,7 +29,7 @@ export default function HomePage() {
       </div>
 
       <p className="mt-12 text-center text-xs text-muted">
-        4 to 6 players · No app install · No login
+        2 to 8 players · No app install · No login
       </p>
     </main>
   );

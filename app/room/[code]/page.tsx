@@ -15,14 +15,13 @@ import type {
 import { sortBySeat } from "@/lib/poker";
 import * as A from "@/lib/actions";
 import SeatList from "@/components/SeatList";
-import SelfCard from "@/components/SelfCard";
-import OtherPlayer from "@/components/OtherPlayer";
 import ActionBar from "@/components/ActionBar";
 import RaiseModal from "@/components/RaiseModal";
 import SidePotsPanel from "@/components/SidePotsPanel";
 import WinnerAssign from "@/components/WinnerAssign";
-import AnimatedNumber from "@/components/AnimatedNumber";
 import HandRankings from "@/components/HandRankings";
+import PokerTable from "@/components/PokerTable";
+import BottomGamePanel from "@/components/BottomGamePanel";
 
 export default function RoomPage() {
   const params = useParams<{ code: string }>();
@@ -467,10 +466,16 @@ export default function RoomPage() {
     );
   }
 
-  // ─────────────────── Active: betting / awaiting winner / awaiting start ──
+  // ─────────────────── Active: poker-table layout ───────────────────
+  const turnPlayerName =
+    players.find((p) => p.id === game.current_turn_player_id)?.name ?? "—";
+
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-36 pt-4">
-      <Header
+    <main
+      className="flex h-dvh flex-col"
+      style={{ background: "#111827" }}
+    >
+      <TableHeader
         code={code}
         isHost={isHost}
         copied={copied}
@@ -484,243 +489,255 @@ export default function RoomPage() {
         onEnd={() => setConfirmEnd(true)}
       />
 
-      <div className="mt-3 mb-3 flex items-center justify-between text-xs text-muted">
-        <span>
-          Hand {game.current_hand} · Round {game.current_round || 1}
+      <div
+        className="flex shrink-0 items-center justify-between px-4 py-1.5 text-[11px]"
+        style={{ background: "#0d1117", borderBottom: "1px solid #1f2937" }}
+      >
+        <span className="font-semibold text-gray-400">
+          Hand {game.current_hand || 1} · Round {game.current_round || 1}
         </span>
-        <span>
-          {game.hand_state === "betting"
-            ? game.current_turn_player_id === meId
-              ? "Your turn"
-              : `Turn: ${players.find((p) => p.id === game.current_turn_player_id)?.name ?? "—"}`
-            : game.hand_state === "awaiting_winner"
-              ? "Awaiting winner"
-              : "Hand ended"}
+        <span className="font-bold tracking-wide">
+          {game.hand_state === "betting" ? (
+            isMyTurn ? (
+              <span style={{ color: "#22c55e" }}>● Jouw beurt</span>
+            ) : (
+              <span className="text-gray-400">
+                Beurt: <span className="text-white">{turnPlayerName}</span>
+              </span>
+            )
+          ) : game.hand_state === "awaiting_winner" ? (
+            <span style={{ color: "#f59e0b" }}>● Winnaar toewijzen</span>
+          ) : (
+            <span className="text-gray-400">Hand afgerond</span>
+          )}
         </span>
       </div>
 
-      {me && (
-        <SelfCard
-          player={me}
-          moneyMode={moneyMode}
-          chipValue={chipValue}
-          isMyTurn={isMyTurn}
-        />
-      )}
+      <div className="relative flex flex-1 flex-col overflow-hidden">
+        {me && (
+          <PokerTable
+            me={me}
+            others={otherPlayers}
+            potAmount={pot?.amount ?? 0}
+            currentTurnPlayerId={game.current_turn_player_id}
+            moneyMode={moneyMode}
+            chipValue={chipValue}
+          />
+        )}
 
-      {/* Pot */}
-      <div className="mt-4 rounded-2xl border border-felt/40 bg-gradient-to-br from-feltDark/40 to-panel p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-feltLight">
-              Pot
-            </div>
-            <AnimatedNumber
-              value={pot?.amount ?? 0}
-              className="block text-3xl font-extrabold tracking-tight text-chip"
+        {sidePots.length > 0 && (
+          <div className="absolute inset-x-3 top-2 z-20 max-h-[42vh] overflow-y-auto">
+            <SidePotsPanel
+              sidePots={sidePots}
+              players={players}
+              moneyMode={moneyMode}
+              chipValue={chipValue}
             />
-            {moneyMode && (
-              <div className="text-xs text-muted">
-                €{((pot?.amount ?? 0) * chipValue).toFixed(2)}
-              </div>
-            )}
           </div>
-          {round && game.hand_state === "betting" && (
-            <div className="text-right">
-              <div className="text-[10px] font-semibold uppercase tracking-widest text-muted">
-                Current bet
-              </div>
-              <div className="text-lg font-bold">
-                {round.current_highest_bet.toLocaleString()}
-              </div>
+        )}
+
+        <button
+          onClick={() => setShowRankings(true)}
+          aria-label="Show poker hand rankings"
+          className="absolute bottom-3 right-3 z-30 flex h-10 w-10 items-center justify-center rounded-full text-base font-bold text-yellow-200 shadow-lg transition active:scale-95"
+          style={{
+            background: "#0d1117",
+            border: "1px solid #1f2937",
+          }}
+        >
+          ?
+        </button>
+      </div>
+
+      <BottomGamePanel me={me!} callAmount={callAmount}>
+        {/* Betting */}
+        {game.hand_state === "betting" && me?.hand_status === "active" && isMyTurn && round && (
+          <ActionBar
+            canCheck={canCheck}
+            callAmount={callAmount}
+            canCall={!canCheck}
+            canRaise={canRaise}
+            onFold={() => takeAction("fold")}
+            onCheck={() => takeAction("check")}
+            onCall={() => takeAction("call")}
+            onRaise={() => setRaiseOpen(true)}
+          />
+        )}
+        {game.hand_state === "betting" && me?.hand_status === "active" && !isMyTurn && (
+          <div
+            className="flex h-14 items-center justify-center rounded-xl text-center text-xs text-gray-400"
+            style={{ background: "#0b1220", border: "1px solid #1f2937" }}
+          >
+            Wachten op {turnPlayerName}…
+          </div>
+        )}
+        {game.hand_state === "betting" && me?.hand_status === "folded" && (
+          <div
+            className="flex h-14 items-center justify-center rounded-xl text-center text-xs text-gray-400"
+            style={{ background: "#0b1220", border: "1px solid #1f2937" }}
+          >
+            Je hebt gefold — wachten tot de volgende hand.
+          </div>
+        )}
+        {game.hand_state === "betting" && me?.hand_status === "all-in" && (
+          <div
+            className="flex h-14 items-center justify-center rounded-xl text-center text-xs text-red-300"
+            style={{ background: "#190f10", border: "1px solid #7f1d1d" }}
+          >
+            All-in — wachten tot de hand klaar is.
+          </div>
+        )}
+
+        {/* Awaiting winner */}
+        {game.hand_state === "awaiting_winner" && isHost && (
+          <div className="max-h-[42vh] overflow-y-auto">
+            <WinnerAssign
+              players={players}
+              potAmount={pot?.amount ?? 0}
+              sidePots={sidePots}
+              moneyMode={moneyMode}
+              chipValue={chipValue}
+              onAwardMain={async (w) => {
+                await A.awardMainPot(game, w);
+              }}
+              onAwardSide={async (id, w, amt) => {
+                await A.awardSidePot(game, id, w, amt);
+                await A.finalizeSidePots(game);
+              }}
+            />
+          </div>
+        )}
+        {game.hand_state === "awaiting_winner" && !isHost && (
+          <div
+            className="flex h-14 items-center justify-center rounded-xl text-center text-xs text-gray-400"
+            style={{ background: "#0b1220", border: "1px solid #1f2937" }}
+          >
+            Banker wijst de winnaar toe…
+          </div>
+        )}
+
+        {/* Between hands */}
+        {game.hand_state === "awaiting_start" &&
+          game.game_phase === "active" &&
+          isHost && (
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={async () => {
+                  await A.nextHand(game, players);
+                }}
+                className="flex h-14 items-center justify-center rounded-xl text-sm font-bold uppercase tracking-widest"
+                style={{
+                  background: "#22c55e",
+                  color: "#052e16",
+                  border: "1px solid #16a34a",
+                }}
+              >
+                New Round
+              </button>
+              <details
+                className="rounded-xl px-3 py-2 text-xs text-gray-400"
+                style={{ background: "#0b1220", border: "1px solid #1f2937" }}
+              >
+                <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-widest">
+                  Rebuys
+                </summary>
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {players.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5"
+                      style={{ background: "#111827" }}
+                    >
+                      <span className="truncate text-xs text-white">
+                        {p.name}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold tabular-nums text-white">
+                          {p.chips.toLocaleString()}
+                        </span>
+                        <button
+                          onClick={() =>
+                            setChipPrompt({
+                              title: `Rebuy for ${p.name}`,
+                              placeholder: "Chips",
+                              defaultValue: game.starting_chips,
+                              onConfirm: async (n) => {
+                                const supabase = getSupabase();
+                                await supabase
+                                  .from("players")
+                                  .update({
+                                    chips: p.chips + n,
+                                    total_buyins: p.total_buyins + n,
+                                  })
+                                  .eq("id", p.id);
+                              },
+                            })
+                          }
+                          className="h-7 w-7 rounded-md text-xs font-bold"
+                          style={{ background: "#14532d", color: "#22c55e" }}
+                        >
+                          +
+                        </button>
+                        <button
+                          onClick={() =>
+                            setChipPrompt({
+                              title: `Remove chips from ${p.name}`,
+                              placeholder: "Chips",
+                              onConfirm: async (n) => {
+                                const supabase = getSupabase();
+                                await supabase
+                                  .from("players")
+                                  .update({
+                                    chips: Math.max(0, p.chips - n),
+                                  })
+                                  .eq("id", p.id);
+                              },
+                            })
+                          }
+                          className="h-7 w-7 rounded-md text-xs font-bold text-gray-300"
+                          style={{ background: "#1f2937" }}
+                        >
+                          −
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
             </div>
           )}
-        </div>
-      </div>
-
-      {sidePots.length > 0 && (
-        <div className="mt-3">
-          <SidePotsPanel
-            sidePots={sidePots}
-            players={players}
-            moneyMode={moneyMode}
-            chipValue={chipValue}
-          />
-        </div>
-      )}
-
-      {/* Other players */}
-      <div className="mt-4 mb-2 text-xs font-semibold uppercase tracking-widest text-muted">
-        Other players
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {otherPlayers.map((p) => (
-          <OtherPlayer
-            key={p.id}
-            player={p}
-            moneyMode={moneyMode}
-            chipValue={chipValue}
-            isTurn={game.current_turn_player_id === p.id}
-          />
-        ))}
-      </div>
-
-      {/* Awaiting winner — host controls */}
-      {game.hand_state === "awaiting_winner" && isHost && (
-        <div className="mt-6">
-          <WinnerAssign
-            players={players}
-            potAmount={pot?.amount ?? 0}
-            sidePots={sidePots}
-            moneyMode={moneyMode}
-            chipValue={chipValue}
-            onAwardMain={async (w) => {
-              await A.awardMainPot(game, w);
-            }}
-            onAwardSide={async (id, w, amt) => {
-              await A.awardSidePot(game, id, w, amt);
-              await A.finalizeSidePots(game);
-            }}
-          />
-        </div>
-      )}
-      {game.hand_state === "awaiting_winner" && !isHost && (
-        <div className="mt-6 rounded-2xl border border-white/5 bg-panel p-4 text-center text-sm text-muted">
-          Waiting for the banker to assign the winner.
-        </div>
-      )}
-
-      {/* Between hands */}
-      {game.hand_state === "awaiting_start" &&
-        game.game_phase === "active" &&
-        isHost && (
-          <div className="mt-6 space-y-3">
-            <button
-              onClick={async () => {
-                await A.nextHand(game, players);
-              }}
-              className="flex h-14 w-full items-center justify-center rounded-2xl bg-felt text-base font-bold text-chip shadow-glow transition hover:bg-feltLight active:scale-[0.98]"
+        {game.hand_state === "awaiting_start" &&
+          game.game_phase === "active" &&
+          !isHost && (
+            <div
+              className="flex h-14 items-center justify-center rounded-xl text-center text-xs text-gray-400"
+              style={{ background: "#0b1220", border: "1px solid #1f2937" }}
             >
-              New Round
-            </button>
+              Wachten op de banker voor de volgende hand…
+            </div>
+          )}
 
-            <details className="rounded-2xl border border-white/5 bg-panel p-4 text-sm text-muted">
-              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-widest text-muted">
-                Adjust chips (rebuys)
-              </summary>
-              <div className="mt-3 flex flex-col gap-2">
-                {players.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between gap-2 rounded-lg bg-panelAlt px-3 py-2"
-                  >
-                    <span className="truncate text-sm text-chip">{p.name}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-chip">
-                        {p.chips.toLocaleString()}
-                      </span>
-                      <button
-                        onClick={() =>
-                          setChipPrompt({
-                            title: `Rebuy for ${p.name}`,
-                            placeholder: "Chips",
-                            defaultValue: game.starting_chips,
-                            onConfirm: async (n) => {
-                              const supabase = getSupabase();
-                              await supabase
-                                .from("players")
-                                .update({
-                                  chips: p.chips + n,
-                                  total_buyins: p.total_buyins + n,
-                                })
-                                .eq("id", p.id);
-                            },
-                          })
-                        }
-                        className="h-8 w-8 rounded-lg bg-felt text-sm font-bold text-chip transition hover:bg-feltLight"
-                      >
-                        +
-                      </button>
-                      <button
-                        onClick={() =>
-                          setChipPrompt({
-                            title: `Remove chips from ${p.name}`,
-                            placeholder: "Chips",
-                            onConfirm: async (n) => {
-                              const supabase = getSupabase();
-                              await supabase
-                                .from("players")
-                                .update({
-                                  chips: Math.max(0, p.chips - n),
-                                })
-                                .eq("id", p.id);
-                            },
-                          })
-                        }
-                        className="h-8 w-8 rounded-lg bg-panel text-sm font-bold text-chip transition hover:bg-white/10"
-                      >
-                        −
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </details>
-          </div>
-        )}
-      {game.hand_state === "awaiting_start" &&
-        game.game_phase === "active" &&
-        !isHost && (
-          <div className="mt-6 rounded-2xl border border-white/5 bg-panel p-4 text-center text-sm text-muted">
-            Waiting for the banker to start the next hand.
-          </div>
-        )}
-
-      {/* Host: end hand button while betting */}
-      {game.hand_state === "betting" && isHost && (
-        <div className="mt-6">
+        {/* Host can end-hand while betting — small secondary link */}
+        {game.hand_state === "betting" && isHost && (
           <button
             onClick={() => setConfirmEndHand(true)}
-            className="flex h-12 w-full items-center justify-center rounded-2xl border border-white/10 bg-panel text-sm font-semibold uppercase tracking-widest text-muted transition hover:bg-panelAlt hover:text-chip"
+            className="mt-2 text-[10px] font-bold uppercase tracking-widest text-gray-500 transition hover:text-gray-300"
           >
-            End hand & assign winner
+            End hand &amp; assign winner →
           </button>
-        </div>
-      )}
+        )}
 
-      {/* Folded message */}
-      {me?.hand_status === "folded" && game.hand_state === "betting" && (
-        <div className="mt-4 rounded-xl border border-white/5 bg-panel p-3 text-center text-xs text-muted">
-          You folded this hand. Watching until next round.
-        </div>
-      )}
-
-      {/* Action bar */}
-      {isMyTurn && round && me && (
-        <ActionBar
-          canCheck={canCheck}
-          callAmount={callAmount}
-          canRaise={canRaise}
-          canUndo={false /* undo shows after action, not before */}
-          onFold={() => takeAction("fold")}
-          onCheck={() => takeAction("check")}
-          onCall={() => takeAction("call")}
-          onRaise={() => setRaiseOpen(true)}
-          onUndo={() => {}}
-        />
-      )}
-      {!isMyTurn && canUndo && (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-white/5 bg-bg/95 px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 backdrop-blur">
-          <div className="mx-auto flex max-w-2xl justify-end">
-            <button
-              onClick={doUndo}
-              className="rounded-lg border border-white/10 bg-panel px-3 py-2 text-xs font-semibold uppercase tracking-wider text-muted transition hover:bg-panelAlt hover:text-chip"
-            >
-              ↶ Undo my action
-            </button>
-          </div>
-        </div>
-      )}
+        {/* Undo (appears for the last actor until the next player acts) */}
+        {canUndo && (
+          <button
+            onClick={doUndo}
+            className="mt-2 self-end rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-400 transition hover:text-white"
+            style={{ background: "#0b1220", border: "1px solid #1f2937" }}
+          >
+            ↶ Undo
+          </button>
+        )}
+      </BottomGamePanel>
 
       {/* Modals */}
       {raiseOpen && me && round && (
@@ -772,26 +789,32 @@ export default function RoomPage() {
       )}
 
       {actionError && (
-        <div className="fixed bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-danger/40 bg-danger/15 px-4 py-2 text-xs text-danger animate-fadeIn">
+        <div
+          className="fixed bottom-44 left-1/2 z-40 -translate-x-1/2 rounded-lg px-4 py-2 text-xs animate-fadeIn"
+          style={{
+            background: "rgba(239,68,68,0.15)",
+            border: "1px solid rgba(239,68,68,0.4)",
+            color: "#fca5a5",
+          }}
+        >
           {actionError}
         </div>
       )}
 
       {dealToast && (
         <div className="pointer-events-none fixed inset-x-0 top-20 z-40 flex justify-center px-4 animate-fadeIn">
-          <div className="pointer-events-auto rounded-2xl border border-feltLight/60 bg-felt/90 px-5 py-3 text-sm font-semibold text-chip shadow-glow backdrop-blur">
+          <div
+            className="pointer-events-auto rounded-xl px-5 py-3 text-sm font-semibold text-white backdrop-blur"
+            style={{
+              background: "rgba(34,197,94,0.92)",
+              border: "1px solid rgba(134,239,172,0.7)",
+              boxShadow: "0 8px 32px rgba(34,197,94,0.35)",
+            }}
+          >
             🃏 Nieuwe kaarten mogen gedeald worden
           </div>
         </div>
       )}
-
-      <button
-        onClick={() => setShowRankings(true)}
-        aria-label="Show poker hand rankings"
-        className="fixed bottom-24 right-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-panel text-base font-bold text-feltLight shadow-lg transition hover:bg-panelAlt active:scale-95"
-      >
-        ?
-      </button>
 
       {showRankings && <HandRankings onClose={() => setShowRankings(false)} />}
     </main>
@@ -800,6 +823,7 @@ export default function RoomPage() {
 
 // ────────────────────────────── shared bits ───────────────────────────
 
+// Used by the lobby and other phases that scroll within `<main>`.
 function Header({
   code,
   isHost,
@@ -834,6 +858,64 @@ function Header({
         <button
           onClick={onEnd}
           className="rounded-lg border border-danger/40 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-danger transition hover:bg-danger/10"
+        >
+          End game
+        </button>
+      )}
+    </header>
+  );
+}
+
+// Compact, non-sticky variant used by the table layout (full-height main).
+function TableHeader({
+  code,
+  isHost,
+  copied,
+  onCopy,
+  onEnd,
+}: {
+  code: string;
+  isHost: boolean;
+  copied: boolean;
+  onCopy: () => void;
+  onEnd: () => void;
+}) {
+  return (
+    <header
+      className="flex shrink-0 items-center justify-between gap-3 px-4 py-2.5"
+      style={{ background: "#0d1117", borderBottom: "1px solid #1f2937" }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-black tracking-tight text-white">
+          ♠ PokerPoes
+        </span>
+        <button
+          onClick={onCopy}
+          title="Copy invite link"
+          className="rounded-md px-2 py-0.5 font-mono text-sm font-bold tracking-[0.25em] transition"
+          style={{
+            background: "#111827",
+            border: "1px solid #1f2937",
+            color: "#86efac",
+          }}
+        >
+          {code}
+        </button>
+        {copied && (
+          <span className="text-[10px] font-semibold text-green-300 animate-fadeIn">
+            Link copied
+          </span>
+        )}
+      </div>
+      {isHost && (
+        <button
+          onClick={onEnd}
+          className="rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest transition"
+          style={{
+            background: "rgba(239,68,68,0.1)",
+            border: "1px solid rgba(239,68,68,0.4)",
+            color: "#ef4444",
+          }}
         >
           End game
         </button>
