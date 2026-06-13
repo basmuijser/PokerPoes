@@ -281,11 +281,36 @@ interface ActionContext {
   pot: Pot | null;
 }
 
+// Re-read the authoritative turn pointer from Supabase right before any
+// chip-moving write. If it no longer points at this player (a stale UI, a
+// dup-click after the turn advanced, or two devices racing) we abort.
+async function assertActorsTurn(
+  gameId: string,
+  expectedPlayerId: string,
+): Promise<void> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("games")
+    .select("current_turn_player_id, hand_state")
+    .eq("id", gameId)
+    .maybeSingle();
+  if (error) throw new Error("Kon de beurt niet verifiëren — probeer opnieuw.");
+  if (!data) throw new Error("Game niet gevonden.");
+  if (data.hand_state !== "betting") {
+    throw new Error("De beurt is voorbij — wacht op de bank.");
+  }
+  if (data.current_turn_player_id !== expectedPlayerId) {
+    throw new Error("Het is niet meer jouw beurt.");
+  }
+}
+
 export async function fold(ctx: ActionContext, player: Player) {
+  await assertActorsTurn(ctx.game.id, player.id);
   await applyAction(ctx, player, "fold", 0);
 }
 
 export async function check(ctx: ActionContext, player: Player) {
+  await assertActorsTurn(ctx.game.id, player.id);
   // Validate: can only check if no outstanding bet to call
   if (ctx.round.current_highest_bet > player.current_bet) {
     throw new Error("Cannot check — there is a bet to call.");
@@ -294,6 +319,7 @@ export async function check(ctx: ActionContext, player: Player) {
 }
 
 export async function call(ctx: ActionContext, player: Player) {
+  await assertActorsTurn(ctx.game.id, player.id);
   const need = Math.max(0, ctx.round.current_highest_bet - player.current_bet);
   const actual = Math.min(need, player.chips);
   await applyAction(ctx, player, "call", actual);
@@ -304,6 +330,7 @@ export async function raise(
   player: Player,
   raiseTo: number,
 ) {
+  await assertActorsTurn(ctx.game.id, player.id);
   const minRaise = ctx.round.current_highest_bet + 1;
   if (raiseTo < minRaise) {
     throw new Error(`Minimum raise is ${minRaise}`);
@@ -440,6 +467,7 @@ async function applyAction(
   await advance(
     { ...ctx, players: newPlayers, round: newRound },
     player.seat_order,
+    player.id,
   );
 }
 
@@ -529,7 +557,16 @@ export async function undo(ctx: ActionContext, player: Player) {
 
 // ────────────────────────────── advance ───────────────────────────────
 
-async function advance(ctx: ActionContext, fromSeat: number) {
+// Every turn-pointer write below is a compare-and-set: we only update the
+// games row if `current_turn_player_id` still equals the actor's id. That way
+// two devices that somehow both think it's their turn cannot both advance —
+// the second one's update affects 0 rows and the action fails.
+
+async function advance(
+  ctx: ActionContext,
+  fromSeat: number,
+  actorId: string,
+) {
   const supabase = getSupabase();
 
   // Refresh side pots whenever someone goes all-in or folds at scale.
@@ -537,7 +574,7 @@ async function advance(ctx: ActionContext, fromSeat: number) {
 
   // Hand has effectively ended: ≤1 player still in.
   if (isHandOver(ctx.players)) {
-    await autoEndHand(ctx);
+    await autoEndHand(ctx, actorId);
     return;
   }
 
@@ -549,10 +586,15 @@ async function advance(ctx: ActionContext, fromSeat: number) {
       .update({ status: "complete" })
       .eq("id", ctx.round.id);
     await refreshSidePots(ctx.game.id, ctx.players);
-    await supabase
+    const { data: casNoMore } = await supabase
       .from("games")
       .update({ hand_state: "awaiting_winner", current_turn_player_id: null })
-      .eq("id", ctx.game.id);
+      .eq("id", ctx.game.id)
+      .eq("current_turn_player_id", actorId)
+      .select("id");
+    if (!casNoMore || casNoMore.length === 0) {
+      throw new Error("Iemand anders heeft de beurt al verzet.");
+    }
     return;
   }
 
@@ -570,7 +612,7 @@ async function advance(ctx: ActionContext, fromSeat: number) {
 
     const nextRoundNumber = (ctx.game.current_round ?? 0) + 1;
 
-    const { data: newRound } = await supabase
+    await supabase
       .from("betting_rounds")
       .insert({
         game_id: ctx.game.id,
@@ -579,9 +621,7 @@ async function advance(ctx: ActionContext, fromSeat: number) {
         current_highest_bet: 0,
         last_aggressor_id: null,
         status: "active",
-      })
-      .select()
-      .single();
+      });
 
     const resetPlayers: Player[] = ctx.players.map((p) =>
       p.hand_status === "active"
@@ -592,13 +632,18 @@ async function advance(ctx: ActionContext, fromSeat: number) {
     const dealer = ctx.game.current_dealer_index ?? 0;
     const next = findNextToAct(resetPlayers, 0, dealer);
 
-    await supabase
+    const { data: casRound } = await supabase
       .from("games")
       .update({
         current_round: nextRoundNumber,
         current_turn_player_id: next?.id ?? null,
       })
-      .eq("id", ctx.game.id);
+      .eq("id", ctx.game.id)
+      .eq("current_turn_player_id", actorId)
+      .select("id");
+    if (!casRound || casRound.length === 0) {
+      throw new Error("Iemand anders heeft de beurt al verzet.");
+    }
     return;
   }
 
@@ -609,20 +654,42 @@ async function advance(ctx: ActionContext, fromSeat: number) {
     fromSeat,
   );
   if (next) {
-    await supabase
+    const { data: casNext } = await supabase
       .from("games")
       .update({ current_turn_player_id: next.id })
-      .eq("id", ctx.game.id);
+      .eq("id", ctx.game.id)
+      .eq("current_turn_player_id", actorId)
+      .select("id");
+    if (!casNext || casNext.length === 0) {
+      throw new Error("Iemand anders heeft de beurt al verzet.");
+    }
   }
 }
 
 // ────────────────────────────── hand end ──────────────────────────────
 
 // If only one player remains in the hand, auto-award the entire pot.
-async function autoEndHand(ctx: ActionContext) {
+// Gated by a CAS on `current_turn_player_id === actorId` so two devices can't
+// both claim to be the actor that ended the hand.
+async function autoEndHand(ctx: ActionContext, actorId: string) {
   const supabase = getSupabase();
   const remaining = ctx.players.filter((p) => p.hand_status !== "folded");
   if (remaining.length === 1) {
+    // Claim the right to finalize. Only the row whose turn pointer still
+    // matches the actor will be updated; anyone else loses the race.
+    const { data: claim } = await supabase
+      .from("games")
+      .update({
+        hand_state: "awaiting_start",
+        current_turn_player_id: null,
+      })
+      .eq("id", ctx.game.id)
+      .eq("current_turn_player_id", actorId)
+      .select("id");
+    if (!claim || claim.length === 0) {
+      throw new Error("Iemand anders heeft de beurt al verzet.");
+    }
+
     const winner = remaining[0];
     const pot = await getPot(ctx.game.id);
     const total = pot?.amount ?? 0;
@@ -638,13 +705,6 @@ async function autoEndHand(ctx: ActionContext) {
       .from("betting_rounds")
       .update({ status: "complete" })
       .eq("id", ctx.round.id);
-    await supabase
-      .from("games")
-      .update({
-        hand_state: "awaiting_start",
-        current_turn_player_id: null,
-      })
-      .eq("id", ctx.game.id);
   }
 }
 

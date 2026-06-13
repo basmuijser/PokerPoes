@@ -53,7 +53,7 @@ export default function BottomGamePanel({ me, callAmount, children }: Props) {
               label="Hand"
               value={me.total_hand_bet.toLocaleString()}
             />
-            <Pill label="Callen" value={callAmount.toLocaleString()} />
+            <Pill label="To call" value={callAmount.toLocaleString()} />
           </div>
         </div>
         {children}

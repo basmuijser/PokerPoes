@@ -3,6 +3,7 @@
 import type { Player } from "@/lib/types";
 import AnimatedNumber from "./AnimatedNumber";
 import PlayerBubble from "./PlayerBubble";
+import ChipIcon from "./ChipIcon";
 
 interface Props {
   me: Player;
@@ -145,10 +146,15 @@ export default function PokerTable({
           return (
             <div
               key={`bet-${player.id}`}
-              className="absolute z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-yellow-300 bg-yellow-500/15 px-2 py-0.5 text-[10px] font-extrabold text-yellow-100 shadow tabular-nums backdrop-blur"
+              className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
               style={{ left: `${cx}%`, top: `${cy}%` }}
+              aria-hidden={false}
             >
-              {player.current_bet.toLocaleString()}
+              <ChipIcon
+                amount={player.current_bet}
+                seatIndex={player.seat_order ?? 0}
+                size={38}
+              />
             </div>
           );
         })}

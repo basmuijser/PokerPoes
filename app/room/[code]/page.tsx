@@ -52,6 +52,7 @@ export default function RoomPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [showRankings, setShowRankings] = useState(false);
   const [dealToast, setDealToast] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const prevRoundRef = useRef<{ hand: number; round: number } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -175,6 +176,22 @@ export default function RoomPage() {
     if (game?.game_phase === "ended") router.replace(`/room/${code}/end`);
   }, [game?.game_phase, code, router]);
 
+  // Safety net: if the tab was backgrounded, a realtime event may have been
+  // dropped. Force a re-read on visibility change / focus so the local turn
+  // pointer always matches the server.
+  useEffect(() => {
+    if (!hasSupabaseEnv()) return;
+    const onVis = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+    };
+  }, [refresh]);
+
   // Toast: a new betting round just started within the same hand.
   useEffect(() => {
     if (!game) return;
@@ -262,8 +279,10 @@ export default function RoomPage() {
     lastAction.betting_round_id === round?.id;
 
   async function takeAction(kind: "fold" | "check" | "call") {
+    if (actionBusy) return;
     setActionError(null);
     if (!game || !me || !round || !pot) return;
+    setActionBusy(true);
     try {
       const ctx = { game, players, round, pot };
       if (kind === "fold") await A.fold(ctx, me);
@@ -271,25 +290,39 @@ export default function RoomPage() {
       if (kind === "call") await A.call(ctx, me);
     } catch (e: any) {
       setActionError(e?.message ?? "Action failed");
+      // Force a fresh read so the UI lines up with the server immediately.
+      await refresh();
+    } finally {
+      setActionBusy(false);
     }
   }
   async function doRaise(amount: number) {
+    if (actionBusy) return;
     setActionError(null);
     setRaiseOpen(false);
     if (!game || !me || !round || !pot) return;
+    setActionBusy(true);
     try {
       await A.raise({ game, players, round, pot }, me, amount);
     } catch (e: any) {
       setActionError(e?.message ?? "Raise failed");
+      await refresh();
+    } finally {
+      setActionBusy(false);
     }
   }
   async function doUndo() {
+    if (actionBusy) return;
     setActionError(null);
     if (!game || !me || !round || !pot) return;
+    setActionBusy(true);
     try {
       await A.undo({ game, players, round, pot }, me);
     } catch (e: any) {
       setActionError(e?.message ?? "Undo failed");
+      await refresh();
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -553,10 +586,10 @@ export default function RoomPage() {
         {/* Betting */}
         {game.hand_state === "betting" && me?.hand_status === "active" && isMyTurn && round && (
           <ActionBar
-            canCheck={canCheck}
+            canCheck={canCheck && !actionBusy}
             callAmount={callAmount}
-            canCall={!canCheck}
-            canRaise={canRaise}
+            canCall={!canCheck && !actionBusy}
+            canRaise={canRaise && !actionBusy}
             onFold={() => takeAction("fold")}
             onCheck={() => takeAction("check")}
             onCall={() => takeAction("call")}

@@ -115,7 +115,7 @@ function JoinForm() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={20}
-            placeholder="Finn"
+            placeholder="Jouw naam"
             className="h-12 w-full rounded-xl border border-white/10 bg-panel px-4 text-base outline-none transition focus:border-feltLight"
           />
         </div>
