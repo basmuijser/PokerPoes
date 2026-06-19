@@ -150,11 +150,7 @@ export default function PokerTable({
               style={{ left: `${cx}%`, top: `${cy}%` }}
               aria-hidden={false}
             >
-              <ChipIcon
-                amount={player.current_bet}
-                seatIndex={player.seat_order ?? 0}
-                size={38}
-              />
+              <ChipIcon amount={player.current_bet} size={38} />
             </div>
           );
         })}

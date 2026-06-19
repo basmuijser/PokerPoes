@@ -15,10 +15,8 @@ import {
   hasAnyAllIn,
   isBettingRoundComplete,
   isHandOver,
-  noMoreBettingPossible,
   pickRandomDealer,
   rotateDealer,
-  seatBeforeSmallBlind,
   sortBySeat,
 } from "./poker";
 
@@ -112,8 +110,16 @@ export async function startGame(game: Game, players: Player[]) {
     for (let i = 0; i < sorted.length; i++) sorted[i].seat_order = i;
   }
 
-  const seats = sorted.map((p) => p.seat_order!) as number[];
-  const dealerSeat = pickRandomDealer(seats);
+  // Only players with chips > 0 are eligible to be dealer/SB/BB. At the very
+  // first hand everyone has starting_chips so this is the same as `seats`,
+  // but guarding here keeps startGame consistent with nextHand/beginHand.
+  const playableSeats = sorted
+    .filter((p) => p.chips > 0)
+    .map((p) => p.seat_order!) as number[];
+  if (playableSeats.length < 2) {
+    throw new Error("Niet genoeg spelers met fiches om te starten.");
+  }
+  const dealerSeat = pickRandomDealer(playableSeats);
 
   await supabase
     .from("games")
@@ -133,9 +139,39 @@ export async function beginHand(
   const supabase = getSupabase();
   const sorted = sortBySeat(players);
   const seats = sorted.map((p) => p.seat_order!) as number[];
-  const { smallBlindSeat, bigBlindSeat } = computeBlindSeats(seats, dealerSeat);
 
-  // Reset hand-level player state
+  // Only players with chips > 0 participate. SB/BB are computed from the
+  // playable seats so a 0-chip player can never be assigned a blind they
+  // can't pay (Fix 4).
+  const playableSorted = sorted.filter((p) => p.chips > 0);
+  const playableSeats = playableSorted.map((p) => p.seat_order!) as number[];
+  if (playableSeats.length < 2) {
+    throw new Error("Niet genoeg spelers met fiches voor een nieuwe hand.");
+  }
+
+  // If the incoming dealerSeat happens to be a sat-out player, rotate forward
+  // through the full seats list until we land on a playable seat.
+  let effectiveDealerSeat = dealerSeat;
+  if (!playableSeats.includes(effectiveDealerSeat)) {
+    const startIdx = seats.indexOf(effectiveDealerSeat);
+    for (let i = 1; i <= seats.length; i++) {
+      const candidate = seats[((startIdx >= 0 ? startIdx : 0) + i) % seats.length];
+      if (playableSeats.includes(candidate)) {
+        effectiveDealerSeat = candidate;
+        break;
+      }
+    }
+  }
+
+  const { smallBlindSeat, bigBlindSeat } = computeBlindSeats(
+    playableSeats,
+    effectiveDealerSeat,
+  );
+
+  // Reset hand-level player state. Players with 0 chips are immediately
+  // folded for this hand so the turn logic / round-completion checks skip
+  // them entirely. They'll be re-included on the next hand once the host
+  // gives them a rebuy (chips > 0 again at the top of beginHand).
   await supabase
     .from("players")
     .update({
@@ -147,13 +183,27 @@ export async function beginHand(
       is_small_blind: false,
       is_big_blind: false,
     })
-    .eq("game_id", game.id);
+    .eq("game_id", game.id)
+    .gt("chips", 0);
+  await supabase
+    .from("players")
+    .update({
+      current_bet: 0,
+      total_hand_bet: 0,
+      hand_status: "folded",
+      has_acted: false,
+      is_dealer: false,
+      is_small_blind: false,
+      is_big_blind: false,
+    })
+    .eq("game_id", game.id)
+    .eq("chips", 0);
 
   // Find seat→player
   const bySeat = new Map<number, Player>();
   for (const p of sorted) bySeat.set(p.seat_order!, p);
 
-  const dealer = bySeat.get(dealerSeat)!;
+  const dealer = bySeat.get(effectiveDealerSeat)!;
   const sb = bySeat.get(smallBlindSeat)!;
   const bb = bySeat.get(bigBlindSeat)!;
 
@@ -192,8 +242,9 @@ export async function beginHand(
     .select()
     .single();
 
-  // First to act: left of BB
-  const updatedPlayers = sorted.map((p) => {
+  // First to act: left of BB. Players with 0 chips are marked folded so
+  // findNextToAct skips past them (Fix 4).
+  const updatedPlayers: Player[] = sorted.map((p) => {
     if (p.id === sb.id)
       return {
         ...p,
@@ -220,15 +271,16 @@ export async function beginHand(
       ...p,
       current_bet: 0,
       total_hand_bet: 0,
-      hand_status: "active" as const,
+      hand_status: (p.chips > 0 ? "active" : "folded") as Player["hand_status"],
       has_acted: false,
     };
   });
 
-  // Pre-flop the small blind acts first. `findNextToAct` walks clockwise
-  // exclusive of `fromSeat`, so we hand it the seat directly before SB.
-  const preflopFromSeat = seatBeforeSmallBlind(seats, smallBlindSeat);
-  const next = findNextToAct(updatedPlayers, bbAmount, preflopFromSeat);
+  // Pre-flop first-to-act (standard poker rules):
+  //   3+ players: the seat LEFT OF BIG BLIND acts first → fromSeat = BB.
+  //   Heads-up (n=2): SB (== dealer) acts first → fromSeat = BB
+  //   (the only other player), which gives next = SB. Same expression for both.
+  const next = findNextToAct(updatedPlayers, bbAmount, bigBlindSeat);
 
   await supabase
     .from("games")
@@ -237,7 +289,7 @@ export async function beginHand(
       current_round: 1,
       hand_state: "betting",
       current_turn_player_id: next?.id ?? null,
-      current_dealer_index: dealerSeat,
+      current_dealer_index: effectiveDealerSeat,
     })
     .eq("id", game.id);
 }
@@ -569,7 +621,8 @@ async function advance(
 ) {
   const supabase = getSupabase();
 
-  // Refresh side pots whenever someone goes all-in or folds at scale.
+  // Side pots are recomputed whenever someone is all-in, so the host's winner
+  // assignment screen sees them.
   if (hasAnyAllIn(ctx.players)) await refreshSidePots(ctx.game.id, ctx.players);
 
   // Hand has effectively ended: ≤1 player still in.
@@ -578,91 +631,46 @@ async function advance(
     return;
   }
 
-  // No further betting possible (everyone left is all-in except one).
-  // Auto-advance through any remaining rounds → awaiting_winner.
-  if (noMoreBettingPossible(ctx.players)) {
-    await supabase
-      .from("betting_rounds")
-      .update({ status: "complete" })
-      .eq("id", ctx.round.id);
-    await refreshSidePots(ctx.game.id, ctx.players);
-    const { data: casNoMore } = await supabase
-      .from("games")
-      .update({ hand_state: "awaiting_winner", current_turn_player_id: null })
-      .eq("id", ctx.game.id)
-      .eq("current_turn_player_id", actorId)
-      .select("id");
-    if (!casNoMore || casNoMore.length === 0) {
-      throw new Error("Iemand anders heeft de beurt al verzet.");
-    }
-    return;
-  }
-
-  // Current betting round complete → start next round automatically.
-  if (isBettingRoundComplete(ctx.players, ctx.round.current_highest_bet)) {
-    await supabase
-      .from("betting_rounds")
-      .update({ status: "complete" })
-      .eq("id", ctx.round.id);
-
-    await supabase
-      .from("players")
-      .update({ current_bet: 0, has_acted: false })
-      .eq("game_id", ctx.game.id);
-
-    const nextRoundNumber = (ctx.game.current_round ?? 0) + 1;
-
-    await supabase
-      .from("betting_rounds")
-      .insert({
-        game_id: ctx.game.id,
-        hand_number: ctx.game.current_hand,
-        round_number: nextRoundNumber,
-        current_highest_bet: 0,
-        last_aggressor_id: null,
-        status: "active",
-      });
-
-    const resetPlayers: Player[] = ctx.players.map((p) =>
-      p.hand_status === "active"
-        ? { ...p, current_bet: 0, has_acted: false }
-        : { ...p, current_bet: 0 },
+  // Continue with next player as long as the betting round is NOT yet complete.
+  // (This is the path that gives the remaining active players a chance to call
+  // or raise after someone goes all-in — Fix 2.)
+  if (!isBettingRoundComplete(ctx.players, ctx.round.current_highest_bet)) {
+    const next = findNextToAct(
+      ctx.players,
+      ctx.round.current_highest_bet,
+      fromSeat,
     );
-
-    const dealer = ctx.game.current_dealer_index ?? 0;
-    const next = findNextToAct(resetPlayers, 0, dealer);
-
-    const { data: casRound } = await supabase
-      .from("games")
-      .update({
-        current_round: nextRoundNumber,
-        current_turn_player_id: next?.id ?? null,
-      })
-      .eq("id", ctx.game.id)
-      .eq("current_turn_player_id", actorId)
-      .select("id");
-    if (!casRound || casRound.length === 0) {
-      throw new Error("Iemand anders heeft de beurt al verzet.");
+    if (next) {
+      const { data: casNext } = await supabase
+        .from("games")
+        .update({ current_turn_player_id: next.id })
+        .eq("id", ctx.game.id)
+        .eq("current_turn_player_id", actorId)
+        .select("id");
+      if (!casNext || casNext.length === 0) {
+        throw new Error("Iemand anders heeft de beurt al verzet.");
+      }
     }
     return;
   }
 
-  // Otherwise: continue with next player.
-  const next = findNextToAct(
-    ctx.players,
-    ctx.round.current_highest_bet,
-    fromSeat,
-  );
-  if (next) {
-    const { data: casNext } = await supabase
-      .from("games")
-      .update({ current_turn_player_id: next.id })
-      .eq("id", ctx.game.id)
-      .eq("current_turn_player_id", actorId)
-      .select("id");
-    if (!casNext || casNext.length === 0) {
-      throw new Error("Iemand anders heeft de beurt al verzet.");
-    }
+  // Round is complete. Per the spec (Fix 5b), we do NOT auto-start another
+  // round — we lock all actions and let the host either rebuy/start a new
+  // hand or, more commonly, assign the winner via the existing UI.
+  await supabase
+    .from("betting_rounds")
+    .update({ status: "complete" })
+    .eq("id", ctx.round.id);
+  await refreshSidePots(ctx.game.id, ctx.players);
+
+  const { data: casLock } = await supabase
+    .from("games")
+    .update({ hand_state: "awaiting_winner", current_turn_player_id: null })
+    .eq("id", ctx.game.id)
+    .eq("current_turn_player_id", actorId)
+    .select("id");
+  if (!casLock || casLock.length === 0) {
+    throw new Error("Iemand anders heeft de beurt al verzet.");
   }
 }
 
@@ -784,7 +792,17 @@ export async function finalizeSidePots(game: Game) {
 export async function nextHand(game: Game, players: Player[]) {
   const sorted = sortBySeat(players);
   const seats = sorted.map((p) => p.seat_order!) as number[];
-  const newDealer = rotateDealer(seats, game.current_dealer_index);
+  const playableSeats = sorted
+    .filter((p) => p.chips > 0)
+    .map((p) => p.seat_order!) as number[];
+  if (playableSeats.length < 2) {
+    throw new Error("Niet genoeg spelers met fiches voor een nieuwe hand.");
+  }
+  // Rotate dealer through ALL seats but stop on the first playable one.
+  let newDealer = rotateDealer(seats, game.current_dealer_index);
+  for (let i = 0; i < seats.length && !playableSeats.includes(newDealer); i++) {
+    newDealer = rotateDealer(seats, newDealer);
+  }
   await beginHand(game, sorted, newDealer);
 }
 

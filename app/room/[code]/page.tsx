@@ -539,7 +539,7 @@ export default function RoomPage() {
               </span>
             )
           ) : game.hand_state === "awaiting_winner" ? (
-            <span style={{ color: "#f59e0b" }}>● Winnaar toewijzen</span>
+            <span style={{ color: "#f59e0b" }}>● Inzetten gelijk — winnaar aanwijzen</span>
           ) : (
             <span className="text-gray-400">Hand afgerond</span>
           )}
@@ -642,10 +642,10 @@ export default function RoomPage() {
         )}
         {game.hand_state === "awaiting_winner" && !isHost && (
           <div
-            className="flex h-14 items-center justify-center rounded-xl text-center text-xs text-gray-400"
+            className="flex min-h-14 items-center justify-center rounded-xl px-3 py-2 text-center text-xs text-gray-300"
             style={{ background: "#0b1220", border: "1px solid #1f2937" }}
           >
-            Banker wijst de winnaar toe…
+            Alle inzetten zijn gelijk — de host moet een winnaar aanwijzen.
           </div>
         )}
 

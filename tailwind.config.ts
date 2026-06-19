@@ -27,6 +27,7 @@ const config: Config = {
       animation: {
         pop: "pop 220ms ease-out",
         fadeIn: "fadeIn 200ms ease-out",
+        turnPulse: "turnPulse 1.4s ease-in-out infinite",
       },
       keyframes: {
         pop: {
@@ -37,6 +38,16 @@ const config: Config = {
         fadeIn: {
           "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        turnPulse: {
+          "0%, 100%": {
+            boxShadow:
+              "0 0 0 2px rgba(34,197,94,0.55), 0 0 16px rgba(34,197,94,0.45)",
+          },
+          "50%": {
+            boxShadow:
+              "0 0 0 3px rgba(74,222,128,0.95), 0 0 28px rgba(34,197,94,0.85)",
+          },
         },
       },
     },
