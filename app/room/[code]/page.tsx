@@ -527,7 +527,8 @@ export default function RoomPage() {
         style={{ background: "#0d1117", borderBottom: "1px solid #1f2937" }}
       >
         <span className="font-semibold text-gray-400">
-          Hand {game.current_hand || 1} · Round {game.current_round || 1}
+          Hand {game.current_hand || 1} · Round{" "}
+          {Math.min(4, Math.max(1, game.current_round || 1))}/4
         </span>
         <span className="font-bold tracking-wide">
           {game.hand_state === "betting" ? (

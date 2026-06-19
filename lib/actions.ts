@@ -609,6 +609,13 @@ export async function undo(ctx: ActionContext, player: Player) {
 
 // ────────────────────────────── advance ───────────────────────────────
 
+// Standard poker has four betting rounds per hand (preflop, flop, turn,
+// river). After the first three complete we auto-start the next round and
+// the client fires the "Nieuwe kaarten mogen gedeald worden" toast. Only
+// after the FOURTH (river) round completes do we lock everything to
+// awaiting_winner.
+const MAX_BETTING_ROUNDS = 4;
+
 // Every turn-pointer write below is a compare-and-set: we only update the
 // games row if `current_turn_player_id` still equals the actor's id. That way
 // two devices that somehow both think it's their turn cannot both advance —
@@ -625,15 +632,15 @@ async function advance(
   // assignment screen sees them.
   if (hasAnyAllIn(ctx.players)) await refreshSidePots(ctx.game.id, ctx.players);
 
-  // Hand has effectively ended: ≤1 player still in.
+  // Early hand-end exception: only one in-hand player left → award pot now.
   if (isHandOver(ctx.players)) {
     await autoEndHand(ctx, actorId);
     return;
   }
 
   // Continue with next player as long as the betting round is NOT yet complete.
-  // (This is the path that gives the remaining active players a chance to call
-  // or raise after someone goes all-in — Fix 2.)
+  // (This is the path that gives remaining active players a chance to call or
+  // raise after someone goes all-in.)
   if (!isBettingRoundComplete(ctx.players, ctx.round.current_highest_bet)) {
     const next = findNextToAct(
       ctx.players,
@@ -654,22 +661,77 @@ async function advance(
     return;
   }
 
-  // Round is complete. Per the spec (Fix 5b), we do NOT auto-start another
-  // round — we lock all actions and let the host either rebuy/start a new
-  // hand or, more commonly, assign the winner via the existing UI.
+  // Round complete. Mark it so and refresh side pots.
   await supabase
     .from("betting_rounds")
     .update({ status: "complete" })
     .eq("id", ctx.round.id);
   await refreshSidePots(ctx.game.id, ctx.players);
 
-  const { data: casLock } = await supabase
+  const currentRound = ctx.game.current_round ?? 1;
+  const activeCount = ctx.players.filter(
+    (p) => p.hand_status === "active",
+  ).length;
+
+  // Lock to awaiting_winner when:
+  //   (a) we just finished the 4th (final) round — normal end of hand, or
+  //   (b) no further betting is possible because at most one player still
+  //       has chips to bet (everyone else is all-in). Continuing to fake
+  //       rounds in that case would just spam toasts at the table with no
+  //       real betting to do.
+  if (currentRound >= MAX_BETTING_ROUNDS || activeCount < 2) {
+    const { data: casLock } = await supabase
+      .from("games")
+      .update({ hand_state: "awaiting_winner", current_turn_player_id: null })
+      .eq("id", ctx.game.id)
+      .eq("current_turn_player_id", actorId)
+      .select("id");
+    if (!casLock || casLock.length === 0) {
+      throw new Error("Iemand anders heeft de beurt al verzet.");
+    }
+    return;
+  }
+
+  // Otherwise: open the next betting round (2, 3, or 4). Reset per-round
+  // player state, insert a new betting_rounds row, bump games.current_round
+  // and set the first actor (left of the dealer) — all under the same CAS
+  // gate so two devices can't both advance the round simultaneously.
+  await supabase
+    .from("players")
+    .update({ current_bet: 0, has_acted: false })
+    .eq("game_id", ctx.game.id);
+
+  const nextRoundNumber = currentRound + 1;
+
+  await supabase
+    .from("betting_rounds")
+    .insert({
+      game_id: ctx.game.id,
+      hand_number: ctx.game.current_hand,
+      round_number: nextRoundNumber,
+      current_highest_bet: 0,
+      last_aggressor_id: null,
+      status: "active",
+    });
+
+  const resetPlayers: Player[] = ctx.players.map((p) =>
+    p.hand_status === "active"
+      ? { ...p, current_bet: 0, has_acted: false }
+      : { ...p, current_bet: 0 },
+  );
+  const dealerSeat = ctx.game.current_dealer_index ?? 0;
+  const firstToAct = findNextToAct(resetPlayers, 0, dealerSeat);
+
+  const { data: casRound } = await supabase
     .from("games")
-    .update({ hand_state: "awaiting_winner", current_turn_player_id: null })
+    .update({
+      current_round: nextRoundNumber,
+      current_turn_player_id: firstToAct?.id ?? null,
+    })
     .eq("id", ctx.game.id)
     .eq("current_turn_player_id", actorId)
     .select("id");
-  if (!casLock || casLock.length === 0) {
+  if (!casRound || casRound.length === 0) {
     throw new Error("Iemand anders heeft de beurt al verzet.");
   }
 }

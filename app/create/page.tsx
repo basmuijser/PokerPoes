@@ -10,24 +10,76 @@ function generateRoomCode(): string {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+// Parse a free-form string into an integer, returning `fallback` for
+// empty/invalid input. Used only when we actually need a number (live
+// preview, blur defaults, submit) — onChange leaves the raw string alone
+// so the user can fully clear the field while typing.
+function toInt(s: string, fallback: number): number {
+  if (s.trim() === "") return fallback;
+  const n = Math.floor(Number(s));
+  if (isNaN(n) || n < 0) return fallback;
+  return n;
+}
+
+function toFloat(s: string, fallback: number): number {
+  if (s.trim() === "") return fallback;
+  const n = Number(s);
+  if (isNaN(n) || n < 0) return fallback;
+  return n;
+}
+
 export default function CreatePage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"fun" | "money">("fun");
-  const [startingChips, setStartingChips] = useState(1000);
-  const [chipValue, setChipValue] = useState(0.1);
-  const [smallBlind, setSmallBlind] = useState(10);
-  const [bigBlind, setBigBlind] = useState(20);
+  // Numeric form fields are stored as raw strings so the user can wipe them
+  // clean. They're parsed to numbers on blur and on submit.
+  const [startingChips, setStartingChips] = useState("1000");
+  const [chipValue, setChipValue] = useState("0.1");
+  const [smallBlind, setSmallBlind] = useState("10");
+  const [bigBlind, setBigBlind] = useState("20");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sensible blur fallbacks. SB → 1, BB → 2× current SB (or 2 if SB is
+  // also empty), starting chips → 1000, chip value → 0.1.
+  //
+  // We read from `e.target.value` rather than from the captured state so
+  // these handlers never run against a stale closure when a user clears
+  // the field and tabs out in the same tick.
+  const blurStartingChips = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (e.target.value.trim() === "") setStartingChips("1000");
+  };
+  const blurChipValue = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (e.target.value.trim() === "") setChipValue("0.1");
+  };
+  const blurSmallBlind = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (e.target.value.trim() === "") setSmallBlind("1");
+  };
+  const blurBigBlind = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (e.target.value.trim() === "") {
+      const sb = toInt(smallBlind, 1);
+      setBigBlind(String(sb * 2));
+    }
+  };
+
+  // Live numeric values for the money-mode preview text. These use the same
+  // defaults the blur handlers would apply, so the preview matches what the
+  // form will actually submit if the user leaves the field blank.
+  const numStartingChips = toInt(startingChips, 1000);
+  const numChipValue = toFloat(chipValue, 0.1);
+  const numSmallBlind = toInt(smallBlind, 1);
+  const numBigBlind = toInt(bigBlind, numSmallBlind * 2);
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return setError("Enter your name");
-    if (smallBlind <= 0 || bigBlind <= 0)
+    if (numSmallBlind <= 0 || numBigBlind <= 0)
       return setError("Blinds must be positive");
-    if (bigBlind <= smallBlind)
+    if (numBigBlind <= numSmallBlind)
       return setError("Big blind must be larger than small blind");
+    if (numStartingChips <= 0)
+      return setError("Starting chips must be positive");
     if (!hasSupabaseEnv()) {
       return setError(
         "Supabase env vars missing. Copy .env.example to .env.local and fill them in.",
@@ -57,10 +109,10 @@ export default function CreatePage() {
         .insert({
           room_code: code,
           mode,
-          chip_value: mode === "money" ? chipValue : 0,
-          starting_chips: startingChips,
-          small_blind: smallBlind,
-          big_blind: bigBlind,
+          chip_value: mode === "money" ? numChipValue : 0,
+          starting_chips: numStartingChips,
+          small_blind: numSmallBlind,
+          big_blind: numBigBlind,
           game_phase: "lobby",
           hand_state: "awaiting_start",
         })
@@ -73,8 +125,8 @@ export default function CreatePage() {
         .insert({
           game_id: game.id,
           name: name.trim(),
-          chips: startingChips,
-          total_buyins: startingChips,
+          chips: numStartingChips,
+          total_buyins: numStartingChips,
           is_host: true,
           seat_order: 0,
         })
@@ -159,11 +211,11 @@ export default function CreatePage() {
           </label>
           <input
             type="number"
+            inputMode="numeric"
             min={1}
             value={startingChips}
-            onChange={(e) =>
-              setStartingChips(Math.max(1, Number(e.target.value) || 0))
-            }
+            onChange={(e) => setStartingChips(e.target.value)}
+            onBlur={blurStartingChips}
             className="h-12 w-full rounded-xl border border-white/10 bg-panel px-4 text-base outline-none transition focus:border-feltLight"
           />
         </div>
@@ -175,11 +227,11 @@ export default function CreatePage() {
             </label>
             <input
               type="number"
+              inputMode="numeric"
               min={1}
               value={smallBlind}
-              onChange={(e) =>
-                setSmallBlind(Math.max(1, Number(e.target.value) || 0))
-              }
+              onChange={(e) => setSmallBlind(e.target.value)}
+              onBlur={blurSmallBlind}
               className="h-12 w-full rounded-xl border border-white/10 bg-panel px-4 text-base outline-none transition focus:border-feltLight"
             />
           </div>
@@ -189,11 +241,11 @@ export default function CreatePage() {
             </label>
             <input
               type="number"
+              inputMode="numeric"
               min={1}
               value={bigBlind}
-              onChange={(e) =>
-                setBigBlind(Math.max(1, Number(e.target.value) || 0))
-              }
+              onChange={(e) => setBigBlind(e.target.value)}
+              onBlur={blurBigBlind}
               className="h-12 w-full rounded-xl border border-white/10 bg-panel px-4 text-base outline-none transition focus:border-feltLight"
             />
           </div>
@@ -206,19 +258,19 @@ export default function CreatePage() {
             </label>
             <input
               type="number"
+              inputMode="decimal"
               min={0}
               step={0.01}
               value={chipValue}
-              onChange={(e) =>
-                setChipValue(Math.max(0, Number(e.target.value) || 0))
-              }
+              onChange={(e) => setChipValue(e.target.value)}
+              onBlur={blurChipValue}
               className="h-12 w-full rounded-xl border border-white/10 bg-panel px-4 text-base outline-none transition focus:border-feltLight"
             />
             <p className="mt-2 text-xs text-muted">
-              Buy-in {startingChips.toLocaleString()} chips = €
-              {(startingChips * chipValue).toFixed(2)} · Blinds €
-              {(smallBlind * chipValue).toFixed(2)} / €
-              {(bigBlind * chipValue).toFixed(2)}
+              Buy-in {numStartingChips.toLocaleString()} chips = €
+              {(numStartingChips * numChipValue).toFixed(2)} · Blinds €
+              {(numSmallBlind * numChipValue).toFixed(2)} / €
+              {(numBigBlind * numChipValue).toFixed(2)}
             </p>
           </div>
         )}
